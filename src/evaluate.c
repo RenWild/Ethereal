@@ -196,6 +196,8 @@ const int RookMobility[15] = {
 
 /* Queen Evaluation Terms */
 
+const int QueenRelativePin = S( -20, -10);
+
 const int QueenMobility[28] = {
     S( -61,-263), S(-213,-388), S( -60,-200), S( -22,-191),
     S(  -7,-144), S(  -4, -80), S(   1, -44), S(   1, -12),
@@ -320,7 +322,7 @@ const int ThreatMinorAttackedByMajor = S( -27, -46);
 const int ThreatRookAttackedByLesser = S( -49, -22);
 const int ThreatMinorAttackedByKing  = S( -16, -16);
 const int ThreatRookAttackedByKing   = S( -18, -16);
-const int ThreatQueenAttackedByOne   = S( -40, -21);
+const int ThreatQueenAttackedByOne   = S( -49, -26);
 const int ThreatOverloadedPieces     = S(  -8, -13);
 const int ThreatByPawnPush           = S(  14,  24);
 
@@ -714,9 +716,10 @@ int evaluateQueens(EvalInfo *ei, Board *board, int colour) {
     const int US = colour, THEM = !colour;
 
     int sq, count, eval = 0;
-    uint64_t tempQueens, attacks;
+    uint64_t tempQueens, attacks, occupied;
 
     tempQueens = board->pieces[QUEEN] & board->colours[US];
+    occupied = board->colours[WHITE] | board->colours[BLACK];
 
     ei->attackedBy[US][QUEEN] = 0ull;
 
@@ -729,10 +732,16 @@ int evaluateQueens(EvalInfo *ei, Board *board, int colour) {
         if (TRACE) T.QueenPSQT32[relativeSquare32(US, sq)][US]++;
 
         // Compute possible attacks and store off information for king safety
-        attacks = queenAttacks(sq, board->colours[WHITE] | board->colours[BLACK]);
+        attacks = queenAttacks(sq, occupied);
         ei->attackedBy2[US]       |= attacks & ei->attacked[US];
         ei->attacked[US]          |= attacks;
         ei->attackedBy[US][QUEEN] |= attacks;
+
+        // Apply a penalty if the Queen is at risk for a discovered attack
+        if (discoveredAttacks(board, sq, US)) {
+            eval += QueenRelativePin;
+            if (TRACE) T.QueenRelativePin[US]++;
+        }
 
         // Apply a bonus (or penalty) based on the mobility of the queen
         count = popcount(ei->mobilityAreas[US] & attacks);

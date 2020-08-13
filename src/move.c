@@ -31,6 +31,7 @@
 #include "search.h"
 #include "thread.h"
 #include "types.h"
+#include "uci.h"
 #include "zobrist.h"
 
 static void updateCastleZobrist(Board *board, uint64_t oldRooks, uint64_t newRooks) {
@@ -441,11 +442,8 @@ int legalMoveCount(Board * board) {
 
     // Count of the legal number of moves for a given position
 
-    int size = 0;
     uint16_t moves[MAX_MOVES];
-    genAllLegalMoves(board, moves, &size);
-
-    return size;
+    return genAllLegalMoves(board, moves);
 }
 
 int moveExaminedByMultiPV(Thread *thread, uint16_t move) {
@@ -455,6 +453,27 @@ int moveExaminedByMultiPV(Thread *thread, uint16_t move) {
 
     for (int i = 0; i < thread->multiPV; i++)
         if (thread->bestMoves[i] == move)
+            return 1;
+
+    return 0;
+}
+
+int moveIsInRootMoves(Thread *thread, uint16_t move) {
+
+    // We do two things: 1) Check to make sure we are not using a move which
+    // has been flagged as excluded thanks to Syzygy probing. 2) Check to see
+    // if we are doing a "go searchmoves <>"  command, in which case we have
+    // to limit our search to the provided moves.
+
+    for (int i = 0; i < MAX_MOVES; i++)
+        if (move == thread->limits->excludedMoves[i])
+            return 0;
+
+    if (!thread->limits->limitedByMoves)
+        return 1;
+
+    for (int i = 0; i < MAX_MOVES; i++)
+        if (move == thread->limits->searchMoves[i])
             return 1;
 
     return 0;

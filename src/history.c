@@ -25,9 +25,9 @@
 #include "thread.h"
 #include "types.h"
 
-void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int height, int bonus) {
+void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int height, int depth) {
 
-    int entry, colour = thread->board.turn;
+    int entry, bonus, colour = thread->board.turn;
     uint16_t bestMove = moves[length-1];
 
     // Extract information from last move
@@ -40,8 +40,22 @@ void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int he
     int fmPiece = thread->pieceStack[height-2];
     int fmTo = MoveTo(follow);
 
+    // Update Killer Moves (Avoid duplicates)
+    if (thread->killers[height][0] != bestMove) {
+        thread->killers[height][1] = thread->killers[height][0];
+        thread->killers[height][0] = bestMove;
+    }
+
+    // Update Counter Moves (BestMove refutes the previous move)
+    if (counter != NONE_MOVE && counter != NULL_MOVE)
+        thread->cmtable[!colour][cmPiece][cmTo] = bestMove;
+
+    // If the 1st quiet move failed-high below depth 4, we don't update history tables
+    // Depth 0 gives no bonus in any case
+    if (length == 1 && depth <= 3) return;
+
     // Cap update size to avoid saturation
-    bonus = MIN(bonus, HistoryMax);
+    bonus = MIN(depth*depth, HistoryMax);
 
     for (int i = 0; i < length; i++) {
 
@@ -72,16 +86,6 @@ void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int he
             thread->continuation[1][fmPiece][fmTo][piece][to] = entry;
         }
     }
-
-    // Update Killer Moves (Avoid duplicates)
-    if (thread->killers[height][0] != bestMove) {
-        thread->killers[height][1] = thread->killers[height][0];
-        thread->killers[height][0] = bestMove;
-    }
-
-    // Update Counter Moves (BestMove refutes the previous move)
-    if (counter != NONE_MOVE && counter != NULL_MOVE)
-        thread->cmtable[!colour][cmPiece][cmTo] = bestMove;
 }
 
 void updateKillerMoves(Thread *thread, int height, uint16_t move) {

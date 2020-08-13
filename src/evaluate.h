@@ -69,6 +69,7 @@ struct EvalTrace {
     int RookFile[2][COLOUR_NB];
     int RookOnSeventh[COLOUR_NB];
     int RookMobility[15][COLOUR_NB];
+    int QueenRelativePin[COLOUR_NB];
     int QueenMobility[28][COLOUR_NB];
     int KingPawnFileProximity[8][COLOUR_NB];
     int KingDefenders[12][COLOUR_NB];
@@ -112,7 +113,6 @@ struct EvalInfo {
     uint64_t occupiedMinusBishops[COLOUR_NB];
     uint64_t occupiedMinusRooks[COLOUR_NB];
     uint64_t passedPawns;
-    uint8_t closedness;
     int kingSquare[COLOUR_NB];
     int kingAttacksCount[COLOUR_NB];
     int kingAttackersCount[COLOUR_NB];

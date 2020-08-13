@@ -71,6 +71,24 @@ int main(int argc, char **argv) {
     // Handle any command line requests
     handleCommandLine(argc, argv);
 
+    /*
+    |------------|-----------------------------------------------------------------------|
+    |  Commands  | Response. * denotes that the command blocks until no longer searching |
+    |------------|-----------------------------------------------------------------------|
+    |        uci |           Outputs the engine name, authors, and all available options |
+    |    isready | *           Responds with readyok when no longer searching a position |
+    | ucinewgame | *  Resets the TT and any Hueristics to ensure determinism in searches |
+    |  setoption | *     Sets a given option and reports that the option was set if done |
+    |   position | *  Sets the board position via an optional FEN and optional move list |
+    |         go | *       Searches the current position with the provided time controls |
+    |  ponderhit |          Flags the search to indicate that the ponder move was played |
+    |       stop |            Signals the search threads to finish and report a bestmove |
+    |       quit |             Exits the engine and any searches by killing the UCI loop |
+    |      perft |            Custom command to compute PERFT(N) of the current position |
+    |      print |         Custom command to print an ASCII view of the current position |
+    |------------|-----------------------------------------------------------------------|
+    */
+
     while (getInput(str)) {
 
         if (strEquals(str, "uci")) {
@@ -89,33 +107,45 @@ int main(int argc, char **argv) {
             printf("uciok\n"), fflush(stdout);
         }
 
-        else if (strEquals(str, "isready"))
+        else if (strEquals(str, "isready")) {
+            pthread_mutex_lock(&READYLOCK);
             printf("readyok\n"), fflush(stdout);
+            pthread_mutex_unlock(&READYLOCK);
+        }
 
-        else if (strEquals(str, "ucinewgame"))
+        else if (strEquals(str, "ucinewgame")) {
+            pthread_mutex_lock(&READYLOCK);
             resetThreadPool(threads), clearTT();
+            pthread_mutex_unlock(&READYLOCK);
+        }
 
-        else if (strStartsWith(str, "setoption"))
+        else if (strStartsWith(str, "setoption")) {
+            pthread_mutex_lock(&READYLOCK);
             uciSetOption(str, &threads, &multiPV, &chess960);
+            pthread_mutex_unlock(&READYLOCK);
+        }
 
-        else if (strStartsWith(str, "position"))
+        else if (strStartsWith(str, "position")) {
+            pthread_mutex_lock(&READYLOCK);
             uciPosition(str, &board, chess960);
+            pthread_mutex_unlock(&READYLOCK);
+        }
 
         else if (strStartsWith(str, "go")) {
-            strncpy(uciGoStruct.str, str, 512);
+            pthread_mutex_lock(&READYLOCK);
             uciGoStruct.multiPV = multiPV;
             uciGoStruct.board   = &board;
             uciGoStruct.threads = threads;
+            strncpy(uciGoStruct.str, str, 512);
             pthread_create(&pthreadsgo, NULL, &uciGo, &uciGoStruct);
+            pthread_detach(pthreadsgo);
         }
 
         else if (strEquals(str, "ponderhit"))
             IS_PONDERING = 0;
 
-        else if (strEquals(str, "stop")) {
+        else if (strEquals(str, "stop"))
             ABORT_SIGNAL = 1, IS_PONDERING = 0;
-            pthread_join(pthreadsgo, NULL);
-        }
 
         else if (strEquals(str, "quit"))
             break;
@@ -135,8 +165,7 @@ void *uciGo(void *cargo) {
     // Get our starting time as soon as possible
     double start = getRealTime();
 
-    Limits limits;
-
+    Limits limits = {0};
     uint16_t bestMove, ponderMove;
     char moveStr[6];
 
@@ -149,8 +178,9 @@ void *uciGo(void *cargo) {
     Board *board    = ((UCIGoStruct*)cargo)->board;
     Thread *threads = ((UCIGoStruct*)cargo)->threads;
 
-    // Grab the ready lock, as we cannot be ready until we finish this search
-    pthread_mutex_lock(&READYLOCK);
+    uint16_t moves[MAX_MOVES];
+    int size = genAllLegalMoves(board, moves);
+    int idx = 0, searchmoves = 0;
 
     // Reset global signals
     IS_PONDERING = 0;
@@ -160,15 +190,23 @@ void *uciGo(void *cargo) {
 
     // Parse any time control and search method information that was sent
     for (ptr = strtok(NULL, " "); ptr != NULL; ptr = strtok(NULL, " ")) {
-        if (strEquals(ptr, "wtime")) wtime = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "btime")) btime = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "winc")) winc = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "binc")) binc = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "movestogo")) mtg = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "depth")) depth = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "movetime")) movetime = atoi(strtok(NULL, " "));
-        if (strEquals(ptr, "infinite")) infinite = 1;
-        if (strEquals(ptr, "ponder")) IS_PONDERING = 1;
+
+        if (strEquals(ptr, "wtime"      )) wtime    = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "btime"      )) btime    = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "winc"       )) winc     = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "binc"       )) binc     = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "movestogo"  )) mtg      = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "depth"      )) depth    = atoi(strtok(NULL, " "));
+        if (strEquals(ptr, "movetime"   )) movetime = atoi(strtok(NULL, " "));
+
+        if (strEquals(ptr, "infinite"   )) infinite = 1;
+        if (strEquals(ptr, "searchmoves")) searchmoves = 1;
+        if (strEquals(ptr, "ponder"     )) IS_PONDERING = 1;
+
+        for (int i = 0; i < size; i++) {
+            moveToString(moves[i], moveStr, board->chess960);
+            if (strEquals(ptr, moveStr)) limits.searchMoves[idx++] = moves[i];
+        }
     }
 
     // Initialize limits for the search
@@ -176,6 +214,7 @@ void *uciGo(void *cargo) {
     limits.limitedByTime  = movetime != 0;
     limits.limitedByDepth = depth    != 0;
     limits.limitedBySelf  = !depth && !movetime && !infinite;
+    limits.limitedByMoves = searchmoves;
     limits.timeLimit      = movetime;
     limits.depthLimit     = depth;
 
@@ -185,8 +224,8 @@ void *uciGo(void *cargo) {
     limits.inc   = (board->turn == WHITE) ?  winc :  binc;
     limits.mtg   = (board->turn == WHITE) ?   mtg :   mtg;
 
-    // Limit MultiPV to the number of legal moves
-    limits.multiPV = MIN(multiPV, legalMoveCount(board));
+    // Cap our MultiPV search based on the suggested or legal moves
+    limits.multiPV = MIN(multiPV, searchmoves ? idx : size);
 
     // Execute search, return best and ponder moves
     getBestMove(threads, board, &limits, &bestMove, &ponderMove);
@@ -306,7 +345,7 @@ void uciPosition(char *str, Board *board, int chess960) {
         moveStr[5] = '\0';
 
         // Generate moves for this position
-        size = 0; genAllLegalMoves(board, moves, &size);
+        size = genAllLegalMoves(board, moves);
 
         // Find and apply the given move
         for (int i = 0; i < size; i++) {
@@ -368,26 +407,6 @@ void uciReport(Thread *threads, int alpha, int beta, int value) {
 
     // Send out a newline and flush
     puts(""); fflush(stdout);
-}
-
-void uciReportTBRoot(Board *board, uint16_t move, unsigned wdl, unsigned dtz) {
-
-    char moveStr[6];
-
-    // Convert result to a score. We place wins and losses just outside
-    // the range of possible mate scores, and move further from them
-    // as the depth to zero increases. Draws are of course, zero.
-    int score = wdl == TB_LOSS ? -MATE + MAX_PLY + dtz + 1
-              : wdl == TB_WIN  ?  MATE - MAX_PLY - dtz - 1 : 0;
-
-    printf("info depth %d seldepth %d multipv 1 score cp %d time 0 "
-           "nodes 0 tbhits 1 nps 0 hashfull %d pv ",
-           MAX_PLY - 1, MAX_PLY - 1, score, 0);
-
-    // Print out the given move
-    moveToString(move, moveStr, board->chess960);
-    puts(moveStr);
-    fflush(stdout);
 }
 
 void uciReportCurrentMove(Board *board, uint16_t move, int currmove, int depth) {

@@ -38,8 +38,7 @@ struct Thread {
     Limits *limits;
     SearchInfo *info;
 
-    int multiPV;
-    int values[MAX_MOVES];
+    int multiPV, values[MAX_MOVES];
     uint16_t bestMoves[MAX_MOVES];
     uint16_t ponderMoves[MAX_MOVES];
 

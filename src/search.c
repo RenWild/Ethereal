@@ -61,10 +61,9 @@ void getBestMove(Thread *threads, Board *board, Limits *limits, uint16_t *best, 
     SearchInfo info = {0};
     pthread_t pthreads[threads->nthreads];
 
-    // If the root position can be found in the DTZ tablebases,
-    // then we simply return the move recommended by Syzygy/Fathom.
-    if (tablebasesProbeDTZ(board, best, ponder))
-        return;
+    // Allow Syzygy to refine the move list for optimal results
+    if (!limits->limitedByMoves && limits->multiPV == 1)
+        tablebasesProbeDTZ(board, limits);
 
     // Minor house keeping for starting a search
     updateTT(); // Table has an age component
@@ -96,7 +95,6 @@ void* iterativeDeepening(void *vthread) {
     SearchInfo *const info = thread->info;
     Limits *const limits   = thread->limits;
     const int mainThread   = thread->index == 0;
-    const int cycle        = thread->index % SMPCycles;
 
     // Bind when we expect to deal with NUMA
     if (thread->nthreads > 8)
@@ -111,10 +109,6 @@ void* iterativeDeepening(void *vthread) {
         // Perform a search for the current depth for each requested line of play
         for (thread->multiPV = 0; thread->multiPV < limits->multiPV; thread->multiPV++)
             aspirationWindow(thread);
-
-        // Occasionally skip depths using Laser's method
-        if (!mainThread && (thread->depth + cycle) % SkipDepths[cycle] == 0)
-            thread->depth += SkipSize[cycle];
 
         // Helper threads need not worry about time and search info updates
         if (!mainThread) continue;
@@ -151,8 +145,7 @@ void aspirationWindow(Thread *thread) {
     int value, depth = thread->depth;
     int alpha = -MATE, beta = MATE, delta = WindowSize;
 
-    // Create an aspiration window after a few depths using
-    // the eval from the bestline from the previous iteration
+    // After a few depths use a previous result to form a window
     if (thread->depth >= WindowDepth) {
         alpha = MAX(-MATE, thread->values[0] - delta);
         beta  = MIN( MATE, thread->values[0] + delta);
@@ -166,8 +159,7 @@ void aspirationWindow(Thread *thread) {
             || (mainThread && elapsedTime(thread->info) >= WindowTimerMS))
             uciReport(thread->threads, alpha, beta, value);
 
-        // Search returned a result within our window. Save the eval,
-        // best move, and ponder moves. Don't report an illegal PV move
+        // Search returned a result within our window
         if (value > alpha && value < beta) {
             thread->values[multiPV]      = value;
             thread->bestMoves[multiPV]   = pv->line[0];
@@ -362,24 +354,33 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
     }
 
     // Step 9 (~9 elo). Probcut Pruning. If we have a good capture that causes a cutoff
-    // with an adjusted beta value at a reduced search depth, we expect that it
-    // will cause a similar cutoff at this search depth, with a normal beta value
+    // with an adjusted beta value at a reduced search depth, we expect that it will
+    // cause a similar cutoff at this search depth, with a normal beta value
     if (   !PvNode
         &&  depth >= ProbCutDepth
         &&  abs(beta) < MATE_IN_MAX
-        &&  eval + moveBestCaseValue(board) >= beta + ProbCutMargin) {
+        && (eval >= beta || eval + moveBestCaseValue(board) >= beta + ProbCutMargin)) {
 
         // Try tactical moves which maintain rBeta
         rBeta = MIN(beta + ProbCutMargin, MATE - MAX_PLY - 1);
         initNoisyMovePicker(&movePicker, thread, rBeta - eval);
         while ((move = selectNextMove(&movePicker, board, 1)) != NONE_MOVE) {
 
-            // Perform a reduced depth verification search
+            // Apply move, skip if move is illegal
             if (!apply(thread, board, move, height)) continue;
-            value = -search(thread, &lpv, -rBeta, -rBeta+1, depth-4, height+1);
+
+            // For high depths, verify the move first with a depth one search
+            if (depth >= 2 * ProbCutDepth)
+                value = -search(thread, &lpv, -rBeta, -rBeta+1, 1, height+1);
+
+            // For low depths, or after the above, verify with a reduced search
+            if (depth < 2 * ProbCutDepth || value >= rBeta)
+                value = -search(thread, &lpv, -rBeta, -rBeta+1, depth-4, height+1);
+
+            // Revert the board state
             revert(thread, board, move, height);
 
-            // Probcut failed high
+            // Probcut failed high verifying the cutoff
             if (value >= rBeta) return value;
         }
     }
@@ -389,9 +390,9 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
     initMovePicker(&movePicker, thread, ttMove, height);
     while ((move = selectNextMove(&movePicker, board, skipQuiets)) != NONE_MOVE) {
 
-        // In MultiPV mode, skip over already examined lines
-        if (RootNode && moveExaminedByMultiPV(thread, move))
-            continue;
+        // MultiPV and searchmoves may limit our search options
+        if (RootNode && moveExaminedByMultiPV(thread, move)) continue;
+        if (RootNode &&    !moveIsInRootMoves(thread, move)) continue;
 
         // For quiet moves we fetch various history scores
         if ((isQuiet = !moveIsTactical(board, move))) {
@@ -402,6 +403,9 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
         // Step 11 (~175 elo). Quiet Move Pruning. Prune any quiet move that meets one
         // of the criteria below, only after proving a non mated line exists
         if (isQuiet && best > -MATE_IN_MAX) {
+
+            // Base LMR value that we expect to use later
+            R = LMRTable[MIN(depth, 63)][MIN(played, 63)];
 
             // Step 11A (~3 elo). Futility Pruning. If our score is far below alpha,
             // and we don't expect anything from this move, we can skip all other quiets
@@ -426,14 +430,16 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
 
             // Step 11D (~8 elo). Counter Move Pruning. Moves with poor counter
             // move history are pruned at near leaf nodes of the search.
-            if (   depth <= CounterMovePruningDepth[improving]
-                && cmhist < CounterMoveHistoryLimit[improving])
+            if (   movePicker.stage > STAGE_COUNTER_MOVE
+                && cmhist < CounterMoveHistoryLimit[improving]
+                && depth - R <= CounterMovePruningDepth[improving])
                 continue;
 
             // Step 11E (~1.5 elo). Follow Up Move Pruning. Moves with poor
             // follow up move history are pruned at near leaf nodes of the search.
-            if (   depth <= FollowUpMovePruningDepth[improving]
-                && fmhist < FollowUpMoveHistoryLimit[improving])
+            if (   movePicker.stage > STAGE_COUNTER_MOVE
+                && fmhist < FollowUpMoveHistoryLimit[improving]
+                && depth - R <= FollowUpMovePruningDepth[improving])
                 continue;
         }
 
@@ -565,7 +571,7 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
 
     // Step 19 (~760 elo). Update History counters on a fail high for a quiet move
     if (best >= beta && !moveIsTactical(board, bestMove))
-        updateHistoryHeuristics(thread, quietsTried, quietsPlayed, height, depth*depth);
+        updateHistoryHeuristics(thread, quietsTried, quietsPlayed, height, depth);
 
     // Step 20. Store results of search into the Transposition Table. We do
     // not overwrite the Root entry from the first line of play we examined
