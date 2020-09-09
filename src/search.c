@@ -30,7 +30,7 @@
 #include "bitboards.h"
 #include "board.h"
 #include "evaluate.h"
-#include "fathom/tbprobe.h"
+#include "pyrrhic/tbprobe.h"
 #include "history.h"
 #include "move.h"
 #include "movegen.h"
@@ -47,6 +47,7 @@
 int LMRTable[64][64];      // Late Move Reductions
 volatile int ABORT_SIGNAL; // Global ABORT flag for threads
 volatile int IS_PONDERING; // Global PONDER flag for threads
+volatile int ANALYSISMODE; // Whether to make some changes for Analysis
 
 void initSearch() {
 
@@ -63,7 +64,8 @@ void getBestMove(Thread *threads, Board *board, Limits *limits, uint16_t *best, 
 
     // Allow Syzygy to refine the move list for optimal results
     if (!limits->limitedByMoves && limits->multiPV == 1)
-        tablebasesProbeDTZ(board, limits);
+        if (tablebasesProbeDTZ(board, limits, best, ponder))
+            return;
 
     // Minor house keeping for starting a search
     updateTT(); // Table has an age component
@@ -235,7 +237,7 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
 
         // Check to see if we have exceeded the maxiumum search draft
         if (height >= MAX_PLY)
-            return evaluateBoard(board, &thread->pktable, thread->contempt);
+            return evaluateBoard(thread, board);
 
         // Mate Distance Pruning. Check to see if this line is so
         // good, or so bad, that being mated in the ply, or  mating in
@@ -264,7 +266,7 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
 
     // Step 5. Probe the Syzygy Tablebases. tablebasesProbeWDL() handles all of
     // the conditions about the board, the existance of tables, the probe depth,
-    // as well as to not probe at the Root. The return is defined by the Fathom API
+    // as well as to not probe at the Root. The return is defined by the Pyrrhic API
     if ((tbresult = tablebasesProbeWDL(board, depth, height)) != TB_RESULT_FAILED) {
 
         thread->tbhits++; // Increment tbhits counter for this thread
@@ -300,7 +302,7 @@ int search(Thread *thread, PVariation *pv, int alpha, int beta, int depth, int h
     // can recompute the eval as `eval = -last_eval + 2 * Tempo`
     eval = thread->evalStack[height] =
            ttHit && ttEval != VALUE_NONE            ?  ttEval
-         : thread->moveStack[height-1] != NULL_MOVE ?  evaluateBoard(board, &thread->pktable, thread->contempt)
+         : thread->moveStack[height-1] != NULL_MOVE ?  evaluateBoard(thread, board)
                                                     : -thread->evalStack[height-1] + 2 * Tempo;
 
     // Futility Pruning Margin
@@ -588,7 +590,7 @@ int qsearch(Thread *thread, PVariation *pv, int alpha, int beta, int height) {
 
     Board *const board = &thread->board;
 
-    int eval, value, best, margin;
+    int eval, value, best;
     int ttHit, ttValue = 0, ttEval = 0, ttDepth = 0, ttBound = 0;
     uint16_t move, ttMove = NONE_MOVE;
     MovePicker movePicker;
@@ -616,7 +618,7 @@ int qsearch(Thread *thread, PVariation *pv, int alpha, int beta, int height) {
     // Step 3. Max Draft Cutoff. If we are at the maximum search draft,
     // then end the search here with a static eval of the current board
     if (height >= MAX_PLY)
-        return evaluateBoard(board, &thread->pktable, thread->contempt);
+        return evaluateBoard(thread, board);
 
     // Step 4. Probe the Transposition Table, adjust the value, and consider cutoffs
     if ((ttHit = getTTEntry(board->hash, &ttMove, &ttValue, &ttEval, &ttDepth, &ttBound))) {
@@ -635,7 +637,7 @@ int qsearch(Thread *thread, PVariation *pv, int alpha, int beta, int height) {
     // can recompute the eval as `eval = -last_eval + 2 * Tempo`
     eval = thread->evalStack[height] =
            ttHit && ttEval != VALUE_NONE            ?  ttEval
-         : thread->moveStack[height-1] != NULL_MOVE ?  evaluateBoard(board, &thread->pktable, thread->contempt)
+         : thread->moveStack[height-1] != NULL_MOVE ?  evaluateBoard(thread, board)
                                                     : -thread->evalStack[height-1] + 2 * Tempo;
 
     // Step 5. Eval Pruning. If a static evaluation of the board will
@@ -646,15 +648,15 @@ int qsearch(Thread *thread, PVariation *pv, int alpha, int beta, int height) {
     if (alpha >= beta) return eval;
 
     // Step 6. Delta Pruning. Even the best possible capture and or promotion
-    // combo with the additional boost of the futility margin would still fail
-    margin = alpha - eval - QFutilityMargin;
-    if (moveBestCaseValue(board) < margin)
+    // combo, with a minor boost for pawn captures, would still fail to cover
+    // the distance between alpha and the evaluation. Playing a move is futile.
+    if (MAX(QSDeltaMargin, moveBestCaseValue(board)) < alpha - eval)
         return eval;
 
     // Step 7. Move Generation and Looping. Generate all tactical moves
     // and return those which are winning via SEE, and also strong enough
     // to beat the margin computed in the Delta Pruning step found above
-    initNoisyMovePicker(&movePicker, thread, MAX(QSEEMargin, margin));
+    initNoisyMovePicker(&movePicker, thread, MAX(1, alpha - eval - QSSeeMargin));
     while ((move = selectNextMove(&movePicker, board, 1)) != NONE_MOVE) {
 
         // Search the next ply if the move is legal

@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 
+#include "evalcache.h"
 #include "types.h"
 
 #ifdef TUNE
@@ -45,15 +46,15 @@ struct EvalTrace {
     int RookValue[COLOUR_NB];
     int QueenValue[COLOUR_NB];
     int KingValue[COLOUR_NB];
-    int PawnPSQT32[32][COLOUR_NB];
-    int KnightPSQT32[32][COLOUR_NB];
-    int BishopPSQT32[32][COLOUR_NB];
-    int RookPSQT32[32][COLOUR_NB];
-    int QueenPSQT32[32][COLOUR_NB];
-    int KingPSQT32[32][COLOUR_NB];
+    int PawnPSQT[SQUARE_NB][COLOUR_NB];
+    int KnightPSQT[SQUARE_NB][COLOUR_NB];
+    int BishopPSQT[SQUARE_NB][COLOUR_NB];
+    int RookPSQT[SQUARE_NB][COLOUR_NB];
+    int QueenPSQT[SQUARE_NB][COLOUR_NB];
+    int KingPSQT[SQUARE_NB][COLOUR_NB];
     int PawnCandidatePasser[2][8][COLOUR_NB];
-    int PawnIsolated[COLOUR_NB];
-    int PawnStacked[2][COLOUR_NB];
+    int PawnIsolated[8][COLOUR_NB];
+    int PawnStacked[2][8][COLOUR_NB];
     int PawnBackwards[2][8][COLOUR_NB];
     int PawnConnected32[32][COLOUR_NB];
     int KnightOutpost[2][2][COLOUR_NB];
@@ -75,6 +76,18 @@ struct EvalTrace {
     int KingDefenders[12][COLOUR_NB];
     int KingShelter[2][8][8][COLOUR_NB];
     int KingStorm[2][4][8][COLOUR_NB];
+    int SafetyKnightWeight[COLOUR_NB];
+    int SafetyBishopWeight[COLOUR_NB];
+    int SafetyRookWeight[COLOUR_NB];
+    int SafetyQueenWeight[COLOUR_NB];
+    int SafetyAttackValue[COLOUR_NB];
+    int SafetyWeakSquares[COLOUR_NB];
+    int SafetyNoEnemyQueens[COLOUR_NB];
+    int SafetySafeQueenCheck[COLOUR_NB];
+    int SafetySafeRookCheck[COLOUR_NB];
+    int SafetySafeBishopCheck[COLOUR_NB];
+    int SafetySafeKnightCheck[COLOUR_NB];
+    int SafetyAdjustment[COLOUR_NB];
     int PassedPawn[2][2][8][COLOUR_NB];
     int PassedFriendlyDistance[8][COLOUR_NB];
     int PassedEnemyDistance[8][COLOUR_NB];
@@ -98,6 +111,7 @@ struct EvalTrace {
     int ComplexityPawnFlanks[COLOUR_NB];
     int ComplexityPawnEndgame[COLOUR_NB];
     int ComplexityAdjustment[COLOUR_NB];
+    int eval, complexity, factor, safety[COLOUR_NB];
 };
 
 struct EvalInfo {
@@ -121,7 +135,7 @@ struct EvalInfo {
     PKEntry *pkentry;
 };
 
-int evaluateBoard(Board *board, PKTable *pktable, int contempt);
+int evaluateBoard(Thread *thread, Board *board);
 int evaluatePieces(EvalInfo *ei, Board *board);
 int evaluatePawns(EvalInfo *ei, Board *board, int colour);
 int evaluateKnights(EvalInfo *ei, Board *board, int colour);
@@ -135,7 +149,7 @@ int evaluateSpace(EvalInfo *ei, Board *board, int colour);
 int evaluateClosedness(EvalInfo *ei, Board *board);
 int evaluateComplexity(EvalInfo *ei, Board *board, int eval);
 int evaluateScaleFactor(Board *board, int eval);
-void initEvalInfo(EvalInfo *ei, Board *board, PKTable *pktable);
+void initEvalInfo(Thread *thread, Board *board, EvalInfo *ei);
 void initEval();
 
 #define MakeScore(mg, eg) ((int)((unsigned int)(eg) << 16) + (mg))

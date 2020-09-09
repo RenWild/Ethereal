@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 CC      = gcc
-SRC     = *.c fathom/tbprobe.c
+SRC     = *.c pyrrhic/tbprobe.c
 LIBS    = -lpthread -lm
 EXE     = Ethereal
 
@@ -48,7 +48,7 @@ release:
 	$(CC) $(RFLAGS) $(SRC) $(LIBS) $(POPCNTFLAGS) -o ../dist/$(EXE)$(VER)-x64-popcnt.exe
 	$(CC) $(RFLAGS) $(SRC) $(LIBS) $(PEXTFLAGS) -o ../dist/$(EXE)$(VER)-x64-pext.exe
 
-texel:
+tune:
 	$(CC) $(TFLAGS) $(SRC) $(LIBS) $(POPCNT) -o $(EXE)
 
 profile:
