@@ -26,9 +26,13 @@ static const int HistoryMax = 400;
 static const int HistoryMultiplier = 32;
 static const int HistoryDivisor = 512;
 
-void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int height, int depth);
-void updateKillerMoves(Thread *thread, int height, uint16_t move);
+void updateHistoryHeuristics(Thread *thread, uint16_t *moves, int length, int depth);
+void updateKillerMoves(Thread *thread, uint16_t move);
 
-void getHistory(Thread *thread, uint16_t move, int height, int *hist, int *cmhist, int *fmhist);
-void getHistoryScores(Thread *thread, uint16_t *moves, int *scores, int start, int length, int height);
-void getRefutationMoves(Thread *thread, int height, uint16_t *killer1, uint16_t *killer2, uint16_t *counter);
+void updateCaptureHistories(Thread *thread, uint16_t best, uint16_t *moves, int length, int depth);
+void getCaptureHistories(Thread *thread, uint16_t *moves, int *scores, int start, int length);
+int getCaptureHistory(Thread *thread, uint16_t move);
+
+int getHistory(Thread *thread, uint16_t move, int *cmhist, int *fmhist);
+void getHistoryScores(Thread *thread, uint16_t *moves, int *scores, int start, int length);
+void getRefutationMoves(Thread *thread, uint16_t *killer1, uint16_t *killer2, uint16_t *counter);

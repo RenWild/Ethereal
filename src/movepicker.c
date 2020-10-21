@@ -44,56 +44,26 @@ static int getBestMoveIndex(MovePicker *mp, int start, int end) {
     return best;
 }
 
-static void evaluateNoisyMoves(MovePicker *mp) {
 
-    static const int MVVLVAValues[8] = {
-         100,  450,  475,  700,
-        1300,    0,    0,    0,
-    };
-
-    // Use modified MVV-LVA to evaluate moves
-    for (int i = 0; i < mp->noisySize; i++) {
-
-        int fromType = pieceType(mp->thread->board.squares[MoveFrom(mp->moves[i])]);
-        int toType   = pieceType(mp->thread->board.squares[MoveTo(mp->moves[i])]);
-
-        // Start with the standard MVV-LVA method
-        mp->values[i] = MVVLVAValues[toType] - fromType;
-
-        // Enpass is a special case of MVV-LVA
-        if (MoveType(mp->moves[i]) == ENPASS_MOVE)
-            mp->values[i] = MVVLVAValues[PAWN] - PAWN;
-
-        // A bonus is in order for only queen promotions
-        else if ((mp->moves[i] & QUEEN_PROMO_MOVE) == QUEEN_PROMO_MOVE)
-            mp->values[i] += MVVLVAValues[QUEEN];
-
-        // We may flag a move with the value -1, to indicate that it was
-        // designated as a bad noisy move while in STAGE_GENERATE_NOISY
-        assert(mp->values[i] >= 0);
-    }
-}
-
-void initMovePicker(MovePicker *mp, Thread *thread, uint16_t ttMove, int height) {
+void initMovePicker(MovePicker *mp, Thread *thread, uint16_t ttMove) {
 
     // Start with the table move
     mp->stage = STAGE_TABLE;
     mp->tableMove = ttMove;
 
     // Lookup our refutations (killers and counter moves)
-    getRefutationMoves(thread, height, &mp->killer1, &mp->killer2, &mp->counter);
+    getRefutationMoves(thread, &mp->killer1, &mp->killer2, &mp->counter);
 
     // General housekeeping
     mp->threshold = 0;
     mp->thread = thread;
-    mp->height = height;
     mp->type = NORMAL_PICKER;
 }
 
-void initSingularMovePicker(MovePicker *mp, Thread *thread, uint16_t ttMove, int height) {
+void initSingularMovePicker(MovePicker *mp, Thread *thread, uint16_t ttMove) {
 
     // Simply skip over the TT move
-    initMovePicker(mp, thread, ttMove, height);
+    initMovePicker(mp, thread, ttMove);
     mp->stage = STAGE_GENERATE_NOISY;
 
 }
@@ -109,7 +79,6 @@ void initNoisyMovePicker(MovePicker *mp, Thread *thread, int threshold) {
     // General housekeeping
     mp->threshold = threshold;
     mp->thread = thread;
-    mp->height = 0;
     mp->type = NOISY_PICKER;
 }
 
@@ -134,7 +103,7 @@ uint16_t selectNextMove(MovePicker *mp, Board *board, int skipQuiets) {
             // to seperate the noisy from the quiet moves, so that we can skip
             // some of the noisy moves during STAGE_GOOD_NOISY and return later
             mp->noisySize = mp->split = genAllNoisyMoves(board, mp->moves);
-            evaluateNoisyMoves(mp);
+            getCaptureHistories(mp->thread, mp->moves, mp->values, 0, mp->noisySize);
             mp->stage = STAGE_GOOD_NOISY;
 
             /* fallthrough */
@@ -223,7 +192,7 @@ uint16_t selectNextMove(MovePicker *mp, Board *board, int skipQuiets) {
             // Generate and evaluate all quiet moves when not skipping them
             if (!skipQuiets) {
                 mp->quietSize = genAllQuietMoves(board, mp->moves + mp->split);
-                getHistoryScores(mp->thread, mp->moves, mp->values, mp->split, mp->quietSize, mp->height);
+                getHistoryScores(mp->thread, mp->moves, mp->values, mp->split, mp->quietSize);
             }
 
             mp->stage = STAGE_QUIET;

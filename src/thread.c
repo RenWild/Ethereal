@@ -58,10 +58,15 @@ void resetThreadPool(Thread *threads) {
     // calls in order to ensure a deterministic behaviour
 
     for (int i = 0; i < threads->nthreads; i++) {
+
+        memset(&threads[i].evtable, 0, sizeof(EvalTable));
         memset(&threads[i].pktable, 0, sizeof(PKTable));
+
         memset(&threads[i].killers, 0, sizeof(KillerTable));
         memset(&threads[i].cmtable, 0, sizeof(CounterMoveTable));
+
         memset(&threads[i].history, 0, sizeof(HistoryTable));
+        memset(&threads[i].chistory, 0, sizeof(CaptureHistoryTable));
         memset(&threads[i].continuation, 0, sizeof(ContinuationTable));
     }
 }
@@ -76,9 +81,14 @@ void newSearchThreadPool(Thread *threads, Board *board, Limits *limits, SearchIn
     int contempt = MakeScore(ContemptDrawPenalty + ContemptComplexity, ContemptDrawPenalty);
 
     for (int i = 0; i < threads->nthreads; i++) {
+
         threads[i].limits = limits;
-        threads[i].info = info;
-        threads[i].nodes = threads[i].tbhits = 0ull;
+        threads[i].info   = info;
+
+        threads[i].height    = 0;
+        threads[i].nodes     = 0ull;
+        threads[i].tbhits    = 0ull;
+
         memcpy(&threads[i].board, board, sizeof(Board));
         threads[i].contempt = board->turn == WHITE ? contempt : -contempt;
     }

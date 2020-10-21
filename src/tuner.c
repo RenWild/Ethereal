@@ -90,6 +90,8 @@ extern const int SafetySafeRookCheck;
 extern const int SafetySafeBishopCheck;
 extern const int SafetySafeKnightCheck;
 extern const int SafetyAdjustment;
+extern const int SafetyShelter[2][8];
+extern const int SafetyStorm[2][8];
 extern const int PassedPawn[2][2][8];
 extern const int PassedFriendlyDistance[8];
 extern const int PassedEnemyDistance[8];
@@ -128,7 +130,7 @@ void runTuner() {
     const int ttupleMB = (int)(STACKSIZE  * sizeof(TTuple) / (1 << 20));
 
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("Tuner will be tuning %d Terms\n", NTERMS);
+    printf("Tuner will be tuning 2x%d Terms\n", NTERMS);
     printf("Allocating Memory for Tuner Entries [%dMB]\n", tentryMB);
     printf("Allocating Memory for Tuner Tuple Stack [%dMB]\n", ttupleMB);
     printf("Saving the current value for each Term as a starting point\n");
@@ -158,10 +160,10 @@ void runTuner() {
         }
 
         error = tunedEvaluationErrors(entries, params, methods, K);
-        printf("Epoch [%d] Error = [%.9f], Rate = [%g]\n", epoch, error, rate);
-
         if (epoch && epoch % LRSTEPRATE == 0) rate = rate / LRDROPRATE;
         if (epoch % REPORTING == 0) printParameters(params, cparams);
+
+        printf("\rEpoch [%d] Error = [%.9f], Rate = [%g]", epoch, error, rate);
     }
 }
 
@@ -203,12 +205,9 @@ void initCoefficients(TVector coeffs) {
 
 void initTunerEntries(TEntry *entries, Thread *thread, TArray methods) {
 
-    Undo undo;
     char line[256];
-    Limits limits = {0};
-    thread->limits = &limits; thread->depth  = 0;
-
     FILE *fin = fopen("FENS", "r");
+
     for (int i = 0; i < NPOSITIONS; i++) {
 
         if (fgets(line, 256, fin) == NULL)
@@ -223,14 +222,7 @@ void initTunerEntries(TEntry *entries, Thread *thread, TArray methods) {
         // Set the board with the current FEN
         boardFromFEN(&thread->board, line, 0);
 
-        // Resolve the position to mitigate tactics
-        if (QSRESOLVE) {
-            qsearch(thread, &thread->pv, -MATE, MATE, 0);
-            for (int pvidx = 0; pvidx < thread->pv.length; pvidx++)
-                applyMove(&thread->board, thread->pv.line[pvidx], &undo);
-        }
-
-        // Defer the set to another function
+        // Defer the setup to another function
         initTunerEntry(&entries[i], thread, &thread->board, methods);
 
         // Occasional reporting for total completion
@@ -322,12 +314,14 @@ double computeOptimalK(TEntry *entries) {
                 best = error, start = curr;
         }
 
-        printf("Epoch [%d] K = %f E = %f\n", i, start, best);
+        printf("Epoch [%d] K = [%.9f] E = [%.9f]\n", i, start, best);
 
         end   = start + step;
         start = start - step;
         step  = step  / 10.0;
     }
+
+    printf("\n");
 
     return start;
 }

@@ -18,20 +18,31 @@
 
 #pragma once
 
-#if defined(_WIN32) || defined(_WIN64)
-    #include <windows.h>
-#else
-    #include <sys/time.h>
-#endif
+#define NN_EG_NEURONS   8
+#define NN_CACHE_SIZE   65536
+#define NN_CACHE_MASK   65535
 
-#include "types.h"
+#define NN_RPvRP        0
+#define NN_EG_COUNT     1
 
-double getRealTime();
-double elapsedTime(SearchInfo *info);
-void initTimeManagment(SearchInfo *info, Limits *limits);
-void updateTimeManagment(SearchInfo *info, Limits *limits);
-int terminateTimeManagment(SearchInfo *info);
-int terminateSearchEarly(Thread *thread);
+#define NN_RPvRP_FILE   "weights/RPvRP.net"
 
-static const double PVFactorCount  = 9;
-static const double PVFactorWeight = 0.105;
+typedef struct NNCacheEntry {
+    float neurons[NN_EG_NEURONS];
+    uint64_t key;
+} NNCacheEntry;
+
+typedef NNCacheEntry NNCache[NN_CACHE_SIZE];
+
+typedef struct EGNetwork {
+    float **inputWeights;
+    float inputBiases[NN_EG_NEURONS];
+    float layer1Weights[NN_EG_NEURONS];
+    float layer1Bias;
+} EGNetwork;
+
+void initEndgameNNs();
+void initEndgameNN(EGNetwork *nn, char *weights[], int inputs);
+
+int evaluateEndgames(Board *board);
+void computeEndgameNeurons(EGNetwork *nn, NNCacheEntry *entry, Board *board);
